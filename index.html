@@ -122,6 +122,15 @@ input,select{font-family:'Manrope',sans-serif;font-size:14px}
 .tx .parc{color:var(--amber);font-size:12px;font-weight:700;font-family:'Manrope'}
 .del{background:transparent;color:var(--ink-soft);padding:5px;border-radius:8px;font-size:15px;line-height:1}
 .del:hover{color:var(--danger);background:var(--danger-soft)}
+.rbadge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;margin-left:6px;vertical-align:middle}
+.rbadge.fix{background:var(--accent-soft);color:var(--accent-dark)}
+.rbadge.var{background:var(--amber-soft);color:var(--amber)}
+.rval{font-family:'Fraunces',serif;font-size:15px;color:var(--ink-soft);margin-right:8px}
+.rstat{font-size:13px;font-weight:600;margin-right:4px}
+.rstat.ok{color:var(--accent-dark)}
+.rinput{width:96px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 9px;outline:none;margin-right:8px}
+.btn-mini{background:var(--accent);color:#fff;border-radius:9px;padding:7px 14px;font-weight:700;font-size:13px}
+.btn-mini:hover{filter:brightness(1.05)}
 
 .cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
 .cbox{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:18px}
@@ -226,7 +235,7 @@ const hoje=()=>new Date().toISOString().slice(0,10);
 const brDate=d=>(d||"").split("-").reverse().join("/");
 
 let sb=null, session=null, signupMode=false;
-let contas=[], cartoes=[], categorias=[], txs=[];
+let contas=[], cartoes=[], categorias=[], txs=[], recorrentes=[];
 const N=new Date(); let ano=N.getFullYear(), mes=N.getMonth(), view="dashboard";
 let charts=[];
 
@@ -276,13 +285,14 @@ document.getElementById("btnLogout").onclick=async()=>{ await sb.auth.signOut();
 /* ---------- data ---------- */
 async function loadAll(){
   const uid=session.user.id;
-  const [c1,c2,c3,c4]=await Promise.all([
+  const [c1,c2,c3,c4,c5]=await Promise.all([
     sb.from("contas").select("*").order("criado_em"),
     sb.from("cartoes").select("*").order("criado_em"),
     sb.from("categorias").select("*").order("criado_em"),
     sb.from("transacoes").select("*").order("data",{ascending:false}),
+    sb.from("recorrentes").select("*").order("criado_em"),
   ]);
-  contas=c1.data||[]; cartoes=c2.data||[]; categorias=c3.data||[]; txs=c4.data||[];
+  contas=c1.data||[]; cartoes=c2.data||[]; categorias=c3.data||[]; txs=c4.data||[]; recorrentes=c5.data||[];
   render();
 }
 const ins=(t,row)=>sb.from(t).insert({...row,user_id:session.user.id});
@@ -341,7 +351,7 @@ function saldosContas(){
 }
 
 /* ---------- nav / shell ---------- */
-const TABS=[["dashboard","Painel"],["lancamentos","Lançamentos"],["cartoes","Cartões"],["anual","Anual"],["config","Config"]];
+const TABS=[["dashboard","Painel"],["lancamentos","Lançamentos"],["cartoes","Cartões"],["recorrentes","Fixas & Recorrentes"],["anual","Anual"],["config","Config"]];
 function buildNav(){
   document.getElementById("nav").innerHTML=TABS.map(t=>`<button data-v="${t[0]}">${t[1]}</button>`).join("");
   document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{view=b.dataset.v;render();});
@@ -353,7 +363,7 @@ function ymSel(){return ano+"-"+String(mes+1).padStart(2,"0");}
 function render(){
   charts.forEach(c=>c.destroy()); charts=[];
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===view));
-  const showMonth=["dashboard","lancamentos","cartoes"].includes(view);
+  const showMonth=["dashboard","lancamentos","cartoes","recorrentes"].includes(view);
   document.getElementById("monthbar").classList.toggle("hidden",!showMonth);
   document.getElementById("mNome").textContent=MESES_L[mes];
   document.getElementById("mAno").textContent=ano;
@@ -365,6 +375,7 @@ function render(){
   if(view==="dashboard")c.innerHTML=viewDashboard();
   else if(view==="lancamentos")c.innerHTML=viewLancamentos();
   else if(view==="cartoes")c.innerHTML=viewCartoes();
+  else if(view==="recorrentes")c.innerHTML=viewRecorrentes();
   else if(view==="anual")c.innerHTML=viewAnual();
   else if(view==="config")c.innerHTML=viewConfig();
   wire();
@@ -466,6 +477,96 @@ function viewAnual(){
     <div class="card wide"><h3>Gastos por categoria no ano</h3>${rankList(cats.slice(0,12))}</div>
   </div>`;
 }
+function recLancada(r){return txs.find(t=>t.recorrente_id===r.id && ym(t.data)===ymSel());}
+function dataRec(r){return ano+"-"+String(mes+1).padStart(2,"0")+"-"+String(Math.min(28,Math.max(1,r.dia||1))).padStart(2,"0");}
+function viewRecorrentes(){
+  const ativos=recorrentes.filter(r=>r.ativo!==false);
+  const linhas=ativos.map(r=>{
+    const ci=catInfo(r.categoria_id);
+    const onde=r.tipo==="cartao"?((cartoes.find(c=>c.id===r.cartao_id)||{}).nome||"cartão"):((contas.find(c=>c.id===r.conta_id)||{}).nome||"conta");
+    const lan=recLancada(r);
+    const badge=r.fixo?'<span class="rbadge fix">fixa</span>':'<span class="rbadge var">varia</span>';
+    const tipoTag=r.tipo==="receita"?"receita":(r.tipo==="cartao"?"cartão":"despesa");
+    let acao;
+    if(lan){acao=`<span class="rstat ok">✓ Lançado · ${fmt(lan.valor)}</span><button class="del" data-rec-undo="${lan.id}" title="desfazer">↩</button>`;}
+    else if(r.fixo){acao=`<span class="rval">${fmt(r.valor)}</span><button class="btn-mini" data-rec-go="${r.id}" data-rec-fixo="1">Lançar</button>`;}
+    else{acao=`<input class="rinput" type="number" inputmode="decimal" placeholder="0,00" data-rec-in="${r.id}"><button class="btn-mini" data-rec-go="${r.id}">Lançar</button>`;}
+    const cls=r.tipo==="receita"?"receita":(r.tipo==="cartao"?"cartao":"despesa");
+    return `<div class="tx ${cls}"><span class="em">${ci.emoji}</span><div class="mid"><b>${r.descricao}${badge}</b><small>${tipoTag} · ${ci.nome} · ${onde} · dia ${r.dia||1}</small></div>${acao}</div>`;
+  }).join("");
+  const temFix=ativos.some(r=>r.fixo && !recLancada(r));
+  return `<div class="grid">
+    <div class="card wide"><h3>Recorrentes de ${MESES_L[mes]} ${ano}</h3>
+      ${ativos.length?`<div class="tx-list">${linhas}</div>`:'<div class="empty">Nenhuma recorrente cadastrada. Cadastre logo abaixo.</div>'}
+      ${temFix?'<button class="btn-ghost" id="btnAllFix">Lançar todas as fixas pendentes</button>':''}
+    </div>
+    <div class="card wide"><h3>Cadastrar despesa fixa / variável</h3>
+      <div class="form" id="recform">
+        <label>Tipo<select id="r_tipo"><option value="despesa">Despesa (débito)</option><option value="cartao">Despesa no cartão</option><option value="receita">Receita</option></select></label>
+        <label>Descrição<input id="r_desc" placeholder="ex: Financiamento do carro"></label>
+        <label>Categoria<select id="r_cat"></select></label>
+        <label id="r_lblConta">Conta<select id="r_conta">${contas.map(c=>`<option value="${c.id}">${c.nome}</option>`).join("")}</select></label>
+        <label id="r_lblCartao" class="hidden">Cartão<select id="r_cartao">${cartoes.map(c=>`<option value="${c.id}">${c.nome}</option>`).join("")||'<option value="">cadastre em Config</option>'}</select></label>
+        <label>Tipo de valor<select id="r_fixo"><option value="1">Fixo (mesmo valor)</option><option value="0">Varia todo mês</option></select></label>
+        <label id="r_lblValor">Valor fixo (R$)<input type="number" id="r_valor" placeholder="0,00"></label>
+        <label>Dia do mês<input type="number" min="1" max="31" id="r_dia" value="5"></label>
+        <button class="btn-add" id="btnAddRec">+ Cadastrar</button>
+      </div>
+      ${recorrentes.length?`<div class="taglist" style="margin-top:14px">${recorrentes.map(r=>`<div class="tag">${r.fixo?"📌":"🔁"} ${r.descricao}${r.fixo?" · "+fmt(r.valor):""}<button data-rec-del="${r.id}">✕</button></div>`).join("")}</div>`:''}
+    </div>
+  </div>`;
+}
+function recFillCats(){
+  const t=document.getElementById("r_tipo").value;
+  const cats=categorias.filter(c=>c.tipo===(t==="receita"?"receita":"despesa"));
+  document.getElementById("r_cat").innerHTML='<option value="">selecione…</option>'+cats.map(c=>`<option value="${c.id}">${c.emoji} ${c.nome}</option>`).join("");
+}
+function recToggle(){
+  const t=document.getElementById("r_tipo").value;
+  document.getElementById("r_lblConta").classList.toggle("hidden",t==="cartao");
+  document.getElementById("r_lblCartao").classList.toggle("hidden",t!=="cartao");
+  document.getElementById("r_lblValor").classList.toggle("hidden",document.getElementById("r_fixo").value!=="1");
+}
+async function lancarRec(r,valor){
+  await ins("transacoes",{tipo:r.tipo,data:dataRec(r),valor,categoria_id:r.categoria_id,
+    conta_id:r.tipo==="cartao"?null:r.conta_id,cartao_id:r.tipo==="cartao"?r.cartao_id:null,
+    parcelas:r.tipo==="cartao"?(r.parcelas||1):null,descricao:r.descricao,parte:null,recorrente_id:r.id});
+}
+function wireRecorrentes(){
+  recFillCats(); recToggle();
+  document.getElementById("r_tipo").onchange=()=>{recFillCats();recToggle();};
+  document.getElementById("r_fixo").onchange=recToggle;
+  document.getElementById("btnAddRec").onclick=async()=>{
+    const t=document.getElementById("r_tipo").value;
+    const desc=document.getElementById("r_desc").value.trim();
+    const cat=document.getElementById("r_cat").value;
+    if(!desc||!cat){alert("Preencha descrição e categoria.");return;}
+    const fixo=document.getElementById("r_fixo").value==="1";
+    const cartao_id=t==="cartao"?(document.getElementById("r_cartao").value||null):null;
+    if(t==="cartao"&&!cartao_id){alert("Cadastre um cartão em Config.");return;}
+    await ins("recorrentes",{tipo:t,descricao:desc,categoria_id:cat,fixo,
+      valor:fixo?(parseFloat((document.getElementById("r_valor").value||"").replace(",","."))||0):0,
+      dia:parseInt(document.getElementById("r_dia").value||1),
+      conta_id:t==="cartao"?null:document.getElementById("r_conta").value,
+      cartao_id,parcelas:1,ativo:true});
+    await loadAll();
+  };
+  document.querySelectorAll("[data-rec-del]").forEach(b=>b.onclick=async()=>{if(confirm("Excluir esta recorrente? Os lançamentos já feitos continuam.")){await del("recorrentes",b.dataset.recDel);await loadAll();}});
+  document.querySelectorAll("[data-rec-undo]").forEach(b=>b.onclick=async()=>{await del("transacoes",b.dataset.recUndo);await loadAll();});
+  document.querySelectorAll("[data-rec-go]").forEach(b=>b.onclick=async()=>{
+    const r=recorrentes.find(x=>x.id===b.dataset.recGo);if(!r)return;
+    let valor;
+    if(b.dataset.recFixo){valor=r.valor;}
+    else{const inp=document.querySelector('[data-rec-in="'+r.id+'"]');valor=parseFloat((inp.value||"").replace(",","."));if(!valor){alert("Digite o valor deste mês.");return;}}
+    await lancarRec(r,valor);await loadAll();
+  });
+  const allBtn=document.getElementById("btnAllFix");
+  if(allBtn)allBtn.onclick=async()=>{
+    const pend=recorrentes.filter(r=>r.ativo!==false&&r.fixo&&!recLancada(r));
+    for(const r of pend){await lancarRec(r,r.valor);}
+    await loadAll();
+  };
+}
 function viewConfig(){
   const sc=saldosContas();
   return `<div class="grid">
@@ -502,6 +603,7 @@ function wire(){
   if(view==="anual")drawAnualCharts();
   if(view==="lancamentos")wireLanc();
   if(view==="cartoes"){}
+  if(view==="recorrentes")wireRecorrentes();
   if(view==="config")wireConfig();
 }
 let lancTipo="despesa";
