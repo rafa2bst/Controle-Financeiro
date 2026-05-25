@@ -487,12 +487,19 @@ function viewRecorrentes(){
     const lan=recLancada(r);
     const badge=r.fixo?'<span class="rbadge fix">fixa</span>':'<span class="rbadge var">varia</span>';
     const tipoTag=r.tipo==="receita"?"receita":(r.tipo==="cartao"?"cartão":"despesa");
+    const total=(r.parcelas_total&&r.parcelas_total>0)?r.parcelas_total:null;
+    const pagasTotal=txs.filter(t=>t.recorrente_id===r.id).length;
+    const pagasAteMes=txs.filter(t=>t.recorrente_id===r.id&&ym(t.data)<=ymSel()).length;
+    const quitado=total&&pagasTotal>=total;
+    let parcLabel="";
+    if(total){const num=lan?pagasAteMes:Math.min(pagasTotal+1,total);parcLabel=(quitado&&!lan)?` · ${total}/${total} quitado`:` · parcela ${num}/${total}`;}
     let acao;
     if(lan){acao=`<span class="rstat ok">✓ Lançado · ${fmt(lan.valor)}</span><button class="del" data-rec-undo="${lan.id}" title="desfazer">↩</button>`;}
+    else if(quitado){acao='<span class="rstat ok">✓ Quitado</span>';}
     else if(r.fixo){acao=`<span class="rval">${fmt(r.valor)}</span><button class="btn-mini" data-rec-go="${r.id}" data-rec-fixo="1">Lançar</button>`;}
     else{acao=`<input class="rinput" type="number" inputmode="decimal" placeholder="0,00" data-rec-in="${r.id}"><button class="btn-mini" data-rec-go="${r.id}">Lançar</button>`;}
     const cls=r.tipo==="receita"?"receita":(r.tipo==="cartao"?"cartao":"despesa");
-    return `<div class="tx ${cls}"><span class="em">${ci.emoji}</span><div class="mid"><b>${r.descricao}${badge}</b><small>${tipoTag} · ${ci.nome} · ${onde} · dia ${r.dia||1}</small></div>${acao}</div>`;
+    return `<div class="tx ${cls}"><span class="em">${ci.emoji}</span><div class="mid"><b>${r.descricao}${badge}</b><small>${tipoTag} · ${ci.nome} · ${onde} · dia ${r.dia||1}${parcLabel}</small></div>${acao}</div>`;
   }).join("");
   const temFix=ativos.some(r=>r.fixo && !recLancada(r));
   return `<div class="grid">
@@ -510,9 +517,10 @@ function viewRecorrentes(){
         <label>Tipo de valor<select id="r_fixo"><option value="1">Fixo (mesmo valor)</option><option value="0">Varia todo mês</option></select></label>
         <label id="r_lblValor">Valor fixo (R$)<input type="number" id="r_valor" placeholder="0,00"></label>
         <label>Dia do mês<input type="number" min="1" max="31" id="r_dia" value="5"></label>
+        <label>Parcelas (total)<input type="number" min="1" id="r_ptot" placeholder="vazio = sem fim"></label>
         <button class="btn-add" id="btnAddRec">+ Cadastrar</button>
       </div>
-      ${recorrentes.length?`<div class="taglist" style="margin-top:14px">${recorrentes.map(r=>`<div class="tag">${r.fixo?"📌":"🔁"} ${r.descricao}${r.fixo?" · "+fmt(r.valor):""}<button data-rec-del="${r.id}">✕</button></div>`).join("")}</div>`:''}
+      ${recorrentes.length?`<div class="taglist" style="margin-top:14px">${recorrentes.map(r=>`<div class="tag">${r.fixo?"📌":"🔁"} ${r.descricao}${r.fixo?" · "+fmt(r.valor):""}${r.parcelas_total?" · "+r.parcelas_total+"x":""}<button data-rec-del="${r.id}">✕</button></div>`).join("")}</div>`:''}
     </div>
   </div>`;
 }
@@ -548,7 +556,7 @@ function wireRecorrentes(){
       valor:fixo?(parseFloat((document.getElementById("r_valor").value||"").replace(",","."))||0):0,
       dia:parseInt(document.getElementById("r_dia").value||1),
       conta_id:t==="cartao"?null:document.getElementById("r_conta").value,
-      cartao_id,parcelas:1,ativo:true});
+      cartao_id,parcelas:1,parcelas_total:(parseInt(document.getElementById("r_ptot").value)||null),ativo:true});
     await loadAll();
   };
   document.querySelectorAll("[data-rec-del]").forEach(b=>b.onclick=async()=>{if(confirm("Excluir esta recorrente? Os lançamentos já feitos continuam.")){await del("recorrentes",b.dataset.recDel);await loadAll();}});
@@ -562,7 +570,7 @@ function wireRecorrentes(){
   });
   const allBtn=document.getElementById("btnAllFix");
   if(allBtn)allBtn.onclick=async()=>{
-    const pend=recorrentes.filter(r=>r.ativo!==false&&r.fixo&&!recLancada(r));
+    const pend=recorrentes.filter(r=>r.ativo!==false&&r.fixo&&!recLancada(r)&&!(r.parcelas_total>0&&txs.filter(t=>t.recorrente_id===r.id).length>=r.parcelas_total));
     for(const r of pend){await lancarRec(r,r.valor);}
     await loadAll();
   };
